@@ -15,6 +15,7 @@
 LUAU_FASTFLAG(LuauFixCallMetamethodErrorReporting)
 LUAU_FASTFLAG(LuauNewTypePathErrorMessages)
 LUAU_FASTFLAG(LuauCallErrorReportingRecoversArgumentLocationsForPacks)
+LUAU_FASTFLAGVARIABLE(LuauOptionalArgumentsThroughGenericPacks)
 
 namespace Luau
 {
@@ -148,7 +149,7 @@ static void ignoreReasoningForReturnType(SubtypingResult& sr)
         sr.isSubtype = true;
 }
 
-static bool areUnsatisfiedArgumentsOptional(const SubtypingReasonings& reasonings, TypePackId argPack, TypePackId funcArgPack)
+static bool areUnsatisfiedArgumentsOptional_DEPRECATED(const SubtypingReasonings& reasonings, TypePackId argPack, TypePackId funcArgPack)
 {
     // If the two argument lists are incompatible solely because of the argument
     // counts, the reasonings will simply point at the argument lists
@@ -222,6 +223,43 @@ static bool isPathOnArgumentList(const Path& path)
             return false;
     }
 
+    return true;
+}
+
+static bool areUnsatisfiedArgumentsOptional(const SubtypingReasonings& reasonings, TypePackId argPack, TypePackId funcArgPack)
+{
+    // Only an argument-count mismatch can be satisfied by omitted optional parameters.
+    if (reasonings.size() != 1)
+        return false;
+
+    const auto& reason = *reasonings.begin();
+    const TypePath::Path justArguments{TypePath::PackField::Arguments};
+    if (!matchesPrefix(justArguments, reason.subPath) || !matchesPrefix(justArguments, reason.superPath) || !isPathOnArgumentList(reason.superPath))
+        return false;
+
+    // Substitute generic tails while retaining the fixed parameters before them.
+    // A path into an individual parameter represents a type mismatch, not omitted arguments.
+    const auto& components = reason.subPath.components;
+    for (size_t i = 1; i < components.size(); i += 2)
+    {
+        const auto tail = get_if<TypePath::PackField>(&components[i]);
+        if (!tail || *tail != TypePath::PackField::Tail || i + 1 == components.size() || !get_if<TypePath::GenericPackMapping>(&components[i + 1]))
+            return false;
+    }
+
+    const auto [argHead, argTail] = flatten(argPack);
+    const TypePack mappedArgs = flattenPackWithPath(funcArgPack, Path(std::vector(components.begin() + 1, components.end())));
+    const auto& funArgHead = mappedArgs.head;
+    const auto& funArgTail = mappedArgs.tail;
+
+    if (argTail || (funArgTail && !get<VariadicTypePack>(*funArgTail)) || argHead.size() >= funArgHead.size())
+        return false;
+
+    for (size_t i = argHead.size(); i < funArgHead.size(); ++i)
+    {
+        if (!isOptional(funArgHead[i]))
+            return false;
+    }
     return true;
 }
 
@@ -572,7 +610,8 @@ void OverloadResolver::testFunction(
                 errors.emplace_back(fnLocation, gbm);
             result.incompatibleOverloads.emplace_back(fnTy, std::move(errors));
         }
-        else if (areUnsatisfiedArgumentsOptional(r.reasoning, argsPack, ftv->argTypes))
+        else if (FFlag::LuauOptionalArgumentsThroughGenericPacks ? areUnsatisfiedArgumentsOptional(r.reasoning, argsPack, ftv->argTypes)
+                                                                 : areUnsatisfiedArgumentsOptional_DEPRECATED(r.reasoning, argsPack, ftv->argTypes))
         {
             // Important!  Subtyping doesn't know anything about
             // optional arguments.  If the only reason subtyping

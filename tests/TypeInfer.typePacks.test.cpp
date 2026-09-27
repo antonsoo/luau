@@ -15,8 +15,93 @@ LUAU_FASTFLAG(LuauNewTypePathErrorMessages)
 LUAU_FASTFLAG(LuauStrictVisitInstantiatedType)
 
 LUAU_FASTFLAG(LuauInstantiateInSubtyping)
+LUAU_FASTFLAG(LuauOptionalArgumentsThroughGenericPacks)
 
 TEST_SUITE_BEGIN("TypePackTests");
+
+TEST_CASE_FIXTURE(Fixture, "generic_pack_call_omits_trailing_optional_arguments")
+{
+    ScopedFastFlag optionalArgumentsThroughGenericPacks{FFlag::LuauOptionalArgumentsThroughGenericPacks, true};
+
+    CheckResult result = check(R"(
+        local function defer<A...>(fn: (A...) -> (), ...: A...)
+            fn(...)
+        end
+
+        local function f(a: number, b: string?) end
+        f(1)
+        defer(f, 1)
+        defer(f, 1, nil)
+        defer(f, 1, "two")
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "generic_pack_call_omits_all_optional_arguments")
+{
+    ScopedFastFlag optionalArgumentsThroughGenericPacks{FFlag::LuauOptionalArgumentsThroughGenericPacks, true};
+
+    CheckResult result = check(R"(
+        local function defer<A...>(fn: (A...) -> (), ...: A...)
+            fn(...)
+        end
+
+        local function f(a: number?, b: string?) end
+        defer(f)
+        defer(f, 1)
+
+        local function g(a: nil) end
+        defer(g)
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "generic_pack_call_preserves_return_types_with_optional_arguments")
+{
+    ScopedFastFlag optionalArgumentsThroughGenericPacks{FFlag::LuauOptionalArgumentsThroughGenericPacks, true};
+
+    CheckResult result = check(R"(
+        local function f(a: number, b: string?): number
+            return a
+        end
+
+        local function call<A..., R...>(fn: (A...) -> R..., ...: A...): R...
+            return fn(...)
+        end
+
+        local value = call(f, 1)
+        local ok, result = pcall(f, 1)
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK_EQ(toString(requireType("value")), "number");
+    CHECK_EQ(toString(requireType("ok")), "boolean");
+    CHECK_EQ(toString(requireType("result")), "number");
+}
+
+TEST_CASE_FIXTURE(Fixture, "generic_pack_call_rejects_invalid_arguments")
+{
+    ScopedFastFlag optionalArgumentsThroughGenericPacks{FFlag::LuauOptionalArgumentsThroughGenericPacks, true};
+
+    CheckResult result = check(R"(
+        local function defer<A...>(fn: (A...) -> (), ...: A...)
+            fn(...)
+        end
+
+        local function optional(a: number, b: string?) end
+        local function required(a: number?, b: string) end
+
+        defer(optional)
+        defer(optional, true)
+        defer(optional, 1, nil, 3)
+        defer(required, 1)
+        defer(required)
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(5, result);
+}
 
 TEST_CASE_FIXTURE(Fixture, "infer_multi_return")
 {
