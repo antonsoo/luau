@@ -35,6 +35,7 @@ LUAU_FASTFLAG(LuauExperimentalIfLocalAnalysis)
 LUAU_FASTFLAG(LuauCyclicRequireTypeInference)
 LUAU_FASTFLAGVARIABLE(LuauFragmentACEnableTypeFunctionEvaluation)
 LUAU_FASTFLAGVARIABLE(LuauFragmentACLocalAutocompleteFix)
+LUAU_FASTFLAGVARIABLE(LuauFragmentACTypeFunctionGlobals)
 
 namespace Luau
 {
@@ -798,7 +799,8 @@ void cloneTypesFromFragment(
     // Fifth  - prepopulate the globals here
     for (const auto& [name, def] : f.globalDefsToPrePopulate)
     {
-        if (auto ty = staleModule->getModuleScope()->lookup(name))
+        // Type function globals belong to their environment rather than the module scope.
+        if (auto ty = FFlag::LuauFragmentACTypeFunctionGlobals ? staleScope->lookup(name) : staleModule->getModuleScope()->lookup(name))
         {
             destScope->lvalueTypes[def] = Luau::cloneIncremental(*ty, *destArena, cloneState, destScope);
         }

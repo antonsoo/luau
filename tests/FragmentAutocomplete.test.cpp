@@ -27,6 +27,7 @@ LUAU_FASTFLAG(DebugLuauUserDefinedClasses)
 LUAU_FASTFLAG(LuauAllowGlobalDeclarationToBeCalledClass)
 LUAU_FASTFLAG(LuauFragmentACEnableTypeFunctionEvaluation)
 LUAU_FASTFLAG(LuauFragmentACLocalAutocompleteFix)
+LUAU_FASTFLAG(LuauFragmentACTypeFunctionGlobals)
 LUAU_FASTFLAG(LuauExperimentalIfLocalSyntax)
 LUAU_FASTFLAG(LuauExperimentalIfLocalAnalysis)
 
@@ -3309,6 +3310,104 @@ end
 
     FragmentAutocompleteStatusResult result = autocompleteFragment(dest, Position{4, 9}, std::nullopt);
     CHECK(result.status != FragmentAutocompleteStatus::InternalIce);
+}
+
+TEST_CASE_FIXTURE(FragmentAutocompleteBuiltinsFixture, "user_defined_type_function_library_members")
+{
+    ScopedFastFlag typeFunctionGlobals{FFlag::LuauFragmentACTypeFunctionGlobals, true};
+
+    const std::string prefix = "--!strict\n";
+    SUBCASE("without_module_binding") {}
+    SUBCASE("with_same_named_module_binding")
+    {
+        loadDefinition("declare types: { moduleOnly: boolean }");
+    }
+
+    const std::string source = prefix + R"(type function foo(a: type)
+    return a
+end
+)";
+
+    const std::string updated = prefix + R"(type function foo(a: type)
+    types.@1
+    return a
+end
+)";
+
+    autocompleteFragmentInNewSolver(
+        source,
+        updated,
+        '1',
+        [](FragmentAutocompleteStatusResult& fragment)
+        {
+            REQUIRE(fragment.result);
+            CHECK_EQ(fragment.result->acResults.context, AutocompleteContext::Property);
+            CHECK(fragment.result->acResults.entryMap.count("unionof"));
+            CHECK(fragment.result->acResults.entryMap.count("singleton"));
+            CHECK_FALSE(fragment.result->acResults.entryMap.count("moduleOnly"));
+        }
+    );
+}
+
+TEST_CASE_FIXTURE(FragmentAutocompleteBuiltinsFixture, "user_defined_type_function_nested_library_members")
+{
+    ScopedFastFlag typeFunctionGlobals{FFlag::LuauFragmentACTypeFunctionGlobals, true};
+
+    const std::string source = R"(--!strict
+type function foo(a: type)
+    if a:is("singleton") then
+        return a
+    end
+    return types.number
+end
+)";
+
+    const std::string updated = R"(--!strict
+type function foo(a: type)
+    if a:is("singleton") then
+        types.@1
+        return a
+    end
+    return types.number
+end
+)";
+
+    autocompleteFragmentInNewSolver(
+        source,
+        updated,
+        '1',
+        [](FragmentAutocompleteStatusResult& fragment)
+        {
+            REQUIRE(fragment.result);
+            CHECK(fragment.result->acResults.entryMap.count("unionof"));
+            CHECK(fragment.result->acResults.entryMap.count("singleton"));
+        }
+    );
+}
+
+TEST_CASE_FIXTURE(FragmentAutocompleteBuiltinsFixture, "type_function_globals_do_not_replace_module_globals")
+{
+    ScopedFastFlag typeFunctionGlobals{FFlag::LuauFragmentACTypeFunctionGlobals, true};
+
+    loadDefinition("declare types: { moduleOnly: boolean }");
+    const std::string source = R"(--!strict
+type function foo(a: type)
+    return types.number
+end
+)";
+    const std::string updated = source + "types.@1";
+
+    autocompleteFragmentInNewSolver(
+        source,
+        updated,
+        '1',
+        [](FragmentAutocompleteStatusResult& fragment)
+        {
+            REQUIRE(fragment.result);
+            CHECK(fragment.result->acResults.entryMap.count("moduleOnly"));
+            CHECK_FALSE(fragment.result->acResults.entryMap.count("unionof"));
+        }
+    );
 }
 
 TEST_CASE_FIXTURE(FragmentAutocompleteBuiltinsFixture, "for_loop_recommends")
