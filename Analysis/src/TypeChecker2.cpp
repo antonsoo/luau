@@ -52,6 +52,7 @@ LUAU_FASTFLAGVARIABLE(LuauStrictVisitInstantiatedType)
 
 LUAU_FASTFLAG(DebugLuauUserDefinedClasses)
 LUAU_FASTFLAG(LuauExperimentalIfLocalAnalysis)
+LUAU_FASTFLAGVARIABLE(LuauSuppressErrorsCallingUnionWithErrorType)
 
 namespace Luau
 {
@@ -2111,7 +2112,10 @@ void TypeChecker2::visitCall(AstExprCall* call)
                 }
                 else if (const auto errorVec = get_if<ErrorVec>(&reasons))
                 {
-                    reportErrors(*errorVec);
+                    // A union with an error-suppressing member, such as `any` refined to `*error-type* | ~(false?)`, is not reported,
+                    // matching the check for a callee that is not a union
+                    if (!(FFlag::LuauSuppressErrorsCallingUnionWithErrorType && isErrorSuppressing(call->func->location, ty)))
+                        reportErrors(*errorVec);
                 }
                 else
                     LUAU_ASSERT(!"Unreachable");
@@ -2125,7 +2129,10 @@ void TypeChecker2::visitCall(AstExprCall* call)
                 }
                 else if (const auto errorVec = get_if<ErrorVec>(&reasons))
                 {
-                    reportErrors(*errorVec);
+                    // A union with an error-suppressing member, such as `any` refined to `*error-type* | ~(false?)`, is not reported,
+                    // matching the check for a callee that is not a union
+                    if (!(FFlag::LuauSuppressErrorsCallingUnionWithErrorType && isErrorSuppressing(call->func->location, ty)))
+                        reportErrors(*errorVec);
                 }
                 else
                     LUAU_ASSERT(!"Unreachable");

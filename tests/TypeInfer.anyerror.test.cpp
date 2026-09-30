@@ -14,6 +14,7 @@
 using namespace Luau;
 
 LUAU_FASTFLAG(DebugLuauForceOldSolver)
+LUAU_FASTFLAG(LuauSuppressErrorsCallingUnionWithErrorType)
 
 TEST_SUITE_BEGIN("TypeInferAnyError");
 
@@ -445,6 +446,43 @@ TEST_CASE_FIXTURE(Fixture, "cast_to_table_of_any")
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "call_any_after_refining_it")
+{
+    ScopedFastFlag suppressErrorsCallingUnionWithErrorType{FFlag::LuauSuppressErrorsCallingUnionWithErrorType, true};
+
+    CheckResult result = check(R"(
+        --!strict
+        local function run(callback: any, handlers: any)
+            if callback then
+                callback()
+            end
+            if handlers.onLoad then
+                handlers.onLoad(1)
+            end
+            if handlers.onError ~= nil then
+                handlers.onError("boom")
+            end
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "call_union_with_a_non_function_member_is_still_an_error")
+{
+    ScopedFastFlag suppressErrorsCallingUnionWithErrorType{FFlag::LuauSuppressErrorsCallingUnionWithErrorType, true};
+
+    CheckResult result = check(R"(
+        --!strict
+        local function run(f: string | () -> ())
+            f()
+        end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK(get<CannotCallNonFunction>(result.errors[0]));
 }
 
 TEST_SUITE_END();
