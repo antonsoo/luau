@@ -54,6 +54,7 @@ LUAU_FASTFLAGVARIABLE(LuauThreadGeneralizeThroughConstraintGeneration)
 LUAU_FASTFLAGVARIABLE(LuauExperimentalIfLocalAnalysis)
 LUAU_FASTFLAG(LuauTraverseScopeToFunction)
 LUAU_FASTFLAGVARIABLE(LuauUnconditionallyVisitTypeAliasParams)
+LUAU_FASTFLAGVARIABLE(LuauSeparateTypeFunctionGlobals)
 
 namespace Luau
 {
@@ -5383,12 +5384,24 @@ struct GlobalPrepopulator : AstVisitor
     const NotNull<const DataFlowGraph> dfg;
 
     DenseHashSet<AstName> uninitializedGlobals;
+    GlobalPrepopulator* typeFunctionGlobals = nullptr;
 
     GlobalPrepopulator(NotNull<Scope> globalScope, NotNull<TypeArena> arena, NotNull<const DataFlowGraph> dfg)
         : globalScope(globalScope)
         , arena(arena)
         , dfg(dfg)
     {
+    }
+
+    bool visit(AstStatTypeFunction* function) override
+    {
+        if (!FFlag::LuauSeparateTypeFunctionGlobals)
+            return true;
+
+        if (typeFunctionGlobals)
+            function->body->visit(typeFunctionGlobals);
+
+        return false;
     }
 
     bool visit(AstExprGlobal* global) override
@@ -5450,6 +5463,7 @@ void ConstraintGenerator::prepopulateGlobalScopeForFragmentTypecheck(const Scope
 {
     // Handle type function globals as well, without preparing a module scope since they have a separate environment
     GlobalPrepopulator tfgp{NotNull{typeFunctionRuntime->rootScope.get()}, arena, dfg};
+    tfgp.typeFunctionGlobals = &tfgp;
     program->visit(&tfgp);
 
     for (auto name : tfgp.uninitializedGlobals)
@@ -5458,7 +5472,11 @@ void ConstraintGenerator::prepopulateGlobalScopeForFragmentTypecheck(const Scope
 
 void ConstraintGenerator::prepopulateGlobalScope(const ScopePtr& globalScope, AstStatBlock* program)
 {
+    // Route type function bodies to their own environment, including nested type functions.
+    GlobalPrepopulator tfgp{NotNull{typeFunctionRuntime->rootScope.get()}, arena, dfg};
+    tfgp.typeFunctionGlobals = &tfgp;
     GlobalPrepopulator gp{NotNull{globalScope.get()}, arena, dfg};
+    gp.typeFunctionGlobals = &tfgp;
 
     if (prepareModuleScope)
         prepareModuleScope(module->name, globalScope);
@@ -5468,9 +5486,8 @@ void ConstraintGenerator::prepopulateGlobalScope(const ScopePtr& globalScope, As
     for (auto name : gp.uninitializedGlobals)
         uninitializedGlobals.insert(name);
 
-    // Handle type function globals as well, without preparing a module scope since they have a separate environment
-    GlobalPrepopulator tfgp{NotNull{typeFunctionRuntime->rootScope.get()}, arena, dfg};
-    program->visit(&tfgp);
+    if (!FFlag::LuauSeparateTypeFunctionGlobals)
+        program->visit(&tfgp);
 
     for (auto name : tfgp.uninitializedGlobals)
         uninitializedGlobals.insert(name);

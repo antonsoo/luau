@@ -23,8 +23,87 @@ LUAU_FASTFLAG(LuauUdtfFixTypeNameTypo)
 LUAU_FASTFLAG(LuauClonePublicInterfaceRetainTypeFunctionSolvedStatus)
 LUAU_FASTFLAG(LuauTypeFunctionsReturnAfterAllSerialized)
 LUAU_FASTFLAG(LuauUdtfTerseChunkNames)
+LUAU_FASTFLAG(LuauSeparateTypeFunctionGlobals)
 
 TEST_SUITE_BEGIN("UserDefinedTypeFunctionTests");
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "udtf_module_assignment_does_not_shadow_library")
+{
+    ScopedFastFlag newSolver{FFlag::DebugLuauForceOldSolver, false};
+    ScopedFastFlag separateGlobals{FFlag::LuauSeparateTypeFunctionGlobals, true};
+
+    CheckResult result = check(R"(
+        math = {}
+        type function absolute()
+            return types.singleton(tostring(math.abs(-7)))
+        end
+        local score: absolute<> = "7"
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK(toString(requireType("score")) == "\"7\"");
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "udtf_nested_function_does_not_shadow_library")
+{
+    ScopedFastFlag newSolver{FFlag::DebugLuauForceOldSolver, false};
+    ScopedFastFlag separateGlobals{FFlag::LuauSeparateTypeFunctionGlobals, true};
+
+    CheckResult result = check(R"(
+        math = {}
+        local function create()
+            type function absolute()
+                return types.singleton(tostring(math.abs(-7)))
+            end
+            local score: absolute<> = "7"
+            return score
+        end
+        local score = create()
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK(toString(requireType("score")) == "\"7\"");
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "udtf_module_function_does_not_shadow_builtin")
+{
+    ScopedFastFlag newSolver{FFlag::DebugLuauForceOldSolver, false};
+    ScopedFastFlag separateGlobals{FFlag::LuauSeparateTypeFunctionGlobals, true};
+
+    CheckResult result = check(R"(
+        function tostring(value: number): number
+            return value
+        end
+        type function stringify(value: type)
+            return types.singleton(tostring(value))
+        end
+        local name: stringify<number> = "number"
+        local score = tostring(7)
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK(toString(requireType("name")) == "\"number\"");
+    CHECK(toString(requireType("score")) == "number");
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "udtf_assignment_does_not_shadow_module_library")
+{
+    ScopedFastFlag newSolver{FFlag::DebugLuauForceOldSolver, false};
+    ScopedFastFlag separateGlobals{FFlag::LuauSeparateTypeFunctionGlobals, true};
+
+    // This type function is not executed; its assignment must not affect
+    // the module's independently available math library.
+    CheckResult result = check(R"(
+        type function unused(value: type)
+            math = {}
+            return value
+        end
+        local score = math.abs(-7)
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK(toString(requireType("score")) == "number");
+}
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "udtf_nil_serialization_works")
 {
